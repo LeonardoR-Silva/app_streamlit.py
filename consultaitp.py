@@ -4,8 +4,10 @@ import zipfile
 import requests
 from io import BytesIO, StringIO
 from datetime import datetime
-import tempfile
+import warnings
 import os
+
+warnings.filterwarnings('ignore')
 
 # Configuração da página
 st.set_page_config(
@@ -15,49 +17,16 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# CSS customizado
-st.markdown("""
-    <style>
-        .main {
-            max-width: 700px;
-            margin: 0 auto;
-        }
-        .stButton > button {
-            width: 100%;
-            height: 45px;
-            font-size: 16px;
-            font-weight: 600;
-        }
-        .success-box {
-            background-color: #e8f5e9;
-            border: 1px solid #4caf50;
-            border-radius: 8px;
-            padding: 16px;
-            margin: 16px 0;
-            color: #2e7d32;
-        }
-        .error-box {
-            background-color: #ffebee;
-            border: 1px solid #f44336;
-            border-radius: 8px;
-            padding: 16px;
-            margin: 16px 0;
-            color: #c62828;
-        }
-        .info-box {
-            background-color: #e3f2fd;
-            border: 1px solid #2196f3;
-            border-radius: 8px;
-            padding: 16px;
-            margin: 16px 0;
-            color: #1565c0;
-        }
-    </style>
-""", unsafe_allow_html=True)
-
 # URLs dos dados ITP
 URL_2025 = 'https://radardatransparencia.atricon.org.br/dados/dados_pntp_2025.zip'
 URL_2024 = 'https://radardatransparencia.atricon.org.br/dados/dados_pntp_2024.zip'
+
+# Paths de cache
+CACHE_DIR = '.cache_itp'
+CACHE_2025 = os.path.join(CACHE_DIR, 'itp_2025.parquet')
+CACHE_2024 = os.path.join(CACHE_DIR, 'itp_2024.parquet')
+
+os.makedirs(CACHE_DIR, exist_ok=True)
 
 # Mapa de estados
 ESTADOS_MAP = {
@@ -70,144 +39,236 @@ ESTADOS_MAP = {
     'SP': 'São Paulo', 'SE': 'Sergipe', 'TO': 'Tocantins'
 }
 
+# CSS customizado
+st.markdown("""
+    <style>
+        .main { max-width: 700px; margin: 0 auto; }
+        .success-box {
+            background-color: #e8f5e9;
+            border: 1px solid #4caf50;
+            border-radius: 8px;
+            padding: 16px;
+            margin: 16px 0;
+            color: #2e7d32;
+        }
+        .info-box {
+            background-color: #e3f2fd;
+            border: 1px solid #2196f3;
+            border-radius: 8px;
+            padding: 16px;
+            margin: 16px 0;
+            color: #1565c0;
+        }
+    </style>
+""", unsafe_allow_html=True)
 
-@st.cache_resource
+
+@st.cache_resource(ttl=86400)
 def load_itp_data():
-    """Carrega dados ITP em cache"""
+    """
+    Carrega dados ITP com cache em Parquet
+    TTL: 24 horas (atualiza automaticamente)
+    """
     try:
-        with st.spinner('⏳ Carregando dados ITP 2025/2024...'):
-            # Baixar e processar 2025
-            st.write("📥 Baixando dados 2025...")
-            response_2025 = requests.get(URL_2025, timeout=60)
-            response_2025.raise_for_status()
-            
-            st.write("📥 Baixando dados 2024...")
-            response_2024 = requests.get(URL_2024, timeout=60)
-            response_2024.raise_for_status()
-            
-            # Extrair CSVs
-            st.write("📂 Extraindo arquivos...")
-            zip_2025 = zipfile.ZipFile(BytesIO(response_2025.content))
-            zip_2024 = zipfile.ZipFile(BytesIO(response_2024.content))
-            
-            csv_2025 = None
-            csv_2024 = None
-            
-            for file_info in zip_2025.filelist:
-                if 'respostas_avaliacoes_pntp_2025.csv' in file_info.filename:
-                    csv_2025 = zip_2025.read(file_info).decode('utf-8')
-                    st.write(f"✓ Encontrado: {file_info.filename}")
-                    break
-            
-            for file_info in zip_2024.filelist:
-                if 'respostas_avaliacoes_pntp_2024.csv' in file_info.filename:
-                    csv_2024 = zip_2024.read(file_info).decode('utf-8')
-                    st.write(f"✓ Encontrado: {file_info.filename}")
-                    break
-            
-            # Carregar DataFrames
-            st.write("📊 Processando dados...")
-            df_2025 = pd.read_csv(StringIO(csv_2025), sep=";")
-            df_2024 = pd.read_csv(StringIO(csv_2024), sep=";")
-            
-            # Estruturar dados por estado
-            dados_estruturados = {}
-            
-            for year, df in [(2025, df_2025), (2024, df_2024)]:
-                if 'estado' in df.columns:
-                    for estado in df['estado'].unique():
-                        if pd.notna(estado):
-                            if estado not in dados_estruturados:
-                                dados_estruturados[estado] = {}
-                            
-                            entidades = df[df['estado'] == estado]
-                            dados_estruturados[estado][year] = entidades
-            
-            st.success('✅ Dados carregados com sucesso!')
-            return dados_estruturados, df_2025, df_2024
+        # Verificar se cache existe
+        if os.path.exists(CACHE_2025) and os.path.exists(CACHE_2024):
+            st.info("⚡ Carregando dados do cache local...")
+            df_2025 = pd.read_parquet(CACHE_2025)
+            df_2024 = pd.read_parquet(CACHE_2024)
+            st.success('✅ Cache carregado!')
+            return df_2025, df_2024, True
+        
+        # Cache não existe, baixar dados
+        st.info("⏳ Primeira execução. Baixando e processando dados (5-10 minutos)...")
+        
+        # Baixar 2025
+        st.write("📥 Baixando ITP 2025 (pode demorar)...")
+        response_2025 = requests.get(URL_2025, timeout=600)
+        response_2025.raise_for_status()
+        st.write("✅ ITP 2025 baixado")
+        
+        # Baixar 2024
+        st.write("📥 Baixando ITP 2024 (pode demorar)...")
+        response_2024 = requests.get(URL_2024, timeout=600)
+        response_2024.raise_for_status()
+        st.write("✅ ITP 2024 baixado")
+        
+        # Extrair e processar 2025
+        st.write("📂 Extraindo ITP 2025...")
+        zip_2025 = zipfile.ZipFile(BytesIO(response_2025.content))
+        csv_2025 = None
+        for file_info in zip_2025.filelist:
+            if 'respostas_avaliacoes_pntp_2025.csv' in file_info.filename:
+                csv_2025 = zip_2025.read(file_info).decode('utf-8')
+                break
+        
+        # Extrair e processar 2024
+        st.write("📂 Extraindo ITP 2024...")
+        zip_2024 = zipfile.ZipFile(BytesIO(response_2024.content))
+        csv_2024 = None
+        for file_info in zip_2024.filelist:
+            if 'respostas_avaliacoes_pntp_2024.csv' in file_info.filename:
+                csv_2024 = zip_2024.read(file_info).decode('utf-8')
+                break
+        
+        if not csv_2025 or not csv_2024:
+            st.error("❌ Arquivos CSV não encontrados")
+            return None, None, False
+        
+        # Carregar com tipos otimizados
+        st.write("📊 Processando dados (otimizando tipos)...")
+        
+        dtype_optimize = {
+            'estado': 'category',
+            'entidade': 'string',
+        }
+        
+        df_2025 = pd.read_csv(
+            StringIO(csv_2025), 
+            sep=";",
+            dtype=dtype_optimize,
+            low_memory=False
+        )
+        
+        df_2024 = pd.read_csv(
+            StringIO(csv_2024), 
+            sep=";",
+            dtype=dtype_optimize,
+            low_memory=False
+        )
+        
+        # Salvar cache em Parquet (muito mais compacto)
+        st.write("💾 Salvando cache em Parquet...")
+        df_2025.to_parquet(CACHE_2025, compression='snappy')
+        df_2024.to_parquet(CACHE_2024, compression='snappy')
+        st.write("✅ Cache salvo")
+        
+        # Mostrar tamanho
+        size_2025 = os.path.getsize(CACHE_2025) / (1024*1024)
+        size_2024 = os.path.getsize(CACHE_2024) / (1024*1024)
+        st.success(f'✅ Dados processados! Cache: {size_2025:.1f}MB + {size_2024:.1f}MB')
+        
+        return df_2025, df_2024, True
     
+    except requests.exceptions.Timeout:
+        st.error("⏱️ Timeout. Arquivo muito grande. Tente novamente em 10 minutos.")
+        return None, None, False
+    except requests.exceptions.ConnectionError:
+        st.error("🔌 Erro de conexão. Verifique internet.")
+        return None, None, False
     except Exception as e:
-        st.error(f'❌ Erro ao carregar dados: {str(e)}')
-        return None, None, None
+        st.error(f"❌ Erro: {str(e)}")
+        return None, None, False
 
 
-def gerar_arquivo_excel(df, nome_arquivo):
+def gerar_arquivo_excel(df, nome_base):
     """Gera arquivo Excel em memória"""
     try:
         output = BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df.to_excel(writer, sheet_name='Dados ITP', index=False)
-        
         output.seek(0)
         return output
     except Exception as e:
-        st.error(f'Erro ao gerar Excel: {str(e)}')
+        st.error(f"❌ Erro ao gerar Excel: {str(e)}")
         return None
 
 
-# Interface principal
+# ============================================================================
+# INTERFACE PRINCIPAL
+# ============================================================================
+
 col1, col2, col3 = st.columns([1, 2, 1])
 with col2:
     st.title("🔍 Consulta ITP 2025")
+
 st.markdown("---")
 st.write("**Download de questionários por entidade**")
 st.markdown("")
 
 # Carregar dados
-dados_estruturados, df_2025, df_2024 = load_itp_data()
+df_2025, df_2024, sucesso = load_itp_data()
 
-if dados_estruturados is None:
-    st.error("❌ Não foi possível carregar os dados. Verifique sua conexão de internet.")
+if not sucesso or df_2025 is None or df_2024 is None:
+    st.error("❌ Não foi possível carregar os dados.")
     st.stop()
 
-# Etapa 1: Selecionar Estado
+# Preparar dados
+todos_estados = set()
+if 'estado' in df_2025.columns:
+    todos_estados.update(df_2025['estado'].dropna().unique())
+if 'estado' in df_2024.columns:
+    todos_estados.update(df_2024['estado'].dropna().unique())
+
+todos_estados = sorted(list(todos_estados))
+
+if not todos_estados:
+    st.error("❌ Nenhum estado encontrado nos dados")
+    st.stop()
+
+# ============================================================================
+# ETAPA 1: SELECIONAR ESTADO
+# ============================================================================
+
 st.subheader("1️⃣ Selecionar Estado")
-estados_disponiveis = sorted(dados_estruturados.keys())
+
 sigla_selecionada = st.selectbox(
     "Escolha um estado:",
-    options=[""] + estados_disponiveis,
-    format_func=lambda x: f"{ESTADOS_MAP.get(x, x)} ({x})" if x else "-- Selecione um estado --"
+    options=[""] + todos_estados,
+    format_func=lambda x: f"{ESTADOS_MAP.get(x, x)} ({x})" if x else "-- Selecione um estado --",
+    key="state_select"
 )
 
 if not sigla_selecionada:
     st.info("👆 Selecione um estado para continuar")
     st.stop()
 
-# Etapa 2: Buscar Entidade
-st.subheader("2️⃣ Buscar Entidade")
-entidades_2025 = dados_estruturados[sigla_selecionada].get(2025, pd.DataFrame())
-entidades_2024 = dados_estruturados[sigla_selecionada].get(2024, pd.DataFrame())
+# Filtrar entidades por estado
+entidades_2025 = set()
+entidades_2024 = set()
 
-# Combinar e deduplicate
-todas_entidades = set()
-if not entidades_2025.empty and 'entidade' in entidades_2025.columns:
-    todas_entidades.update(entidades_2025['entidade'].dropna().unique())
-if not entidades_2024.empty and 'entidade' in entidades_2024.columns:
-    todas_entidades.update(entidades_2024['entidade'].dropna().unique())
+if 'estado' in df_2025.columns and 'entidade' in df_2025.columns:
+    estado_data = df_2025[df_2025['estado'] == sigla_selecionada]
+    entidades_2025 = set(estado_data['entidade'].dropna().unique())
 
-todas_entidades = sorted(list(todas_entidades))
+if 'estado' in df_2024.columns and 'entidade' in df_2024.columns:
+    estado_data = df_2024[df_2024['estado'] == sigla_selecionada]
+    entidades_2024 = set(estado_data['entidade'].dropna().unique())
+
+todas_entidades = sorted(list(entidades_2025.union(entidades_2024)))
 
 if not todas_entidades:
     st.error(f"❌ Nenhuma entidade encontrada para {ESTADOS_MAP.get(sigla_selecionada, sigla_selecionada)}")
     st.stop()
 
-# Campo de busca
+# ============================================================================
+# ETAPA 2: BUSCAR ENTIDADE
+# ============================================================================
+
+st.subheader("2️⃣ Buscar Entidade")
+
 termo_busca = st.text_input(
     "Digite para filtrar entidades:",
     placeholder="Ex: Prefeitura, Câmara, Assembleia...",
-    key="search"
+    key="search_input"
 )
 
-# Filtrar entidades
+# Filtrar
 entidades_filtradas = [e for e in todas_entidades 
-                      if termo_busca.lower() in e.lower()]
+                       if termo_busca.lower() in e.lower()] if termo_busca else todas_entidades
 
-if not entidades_filtradas and termo_busca:
+if termo_busca and not entidades_filtradas:
     st.warning(f"⚠️ Nenhuma entidade encontrada para '{termo_busca}'")
     st.stop()
 
-# Etapa 3: Selecionar Entidade
+st.caption(f"📊 {len(entidades_filtradas)} entidade(s) disponível(is)")
+
+# ============================================================================
+# ETAPA 3: SELECIONAR ENTIDADE
+# ============================================================================
+
 st.subheader("3️⃣ Selecionar Entidade")
+
 entidade_selecionada = st.selectbox(
     "Escolha uma entidade:",
     options=[""] + entidades_filtradas,
@@ -219,7 +280,7 @@ if not entidade_selecionada:
     st.info("👆 Selecione uma entidade para continuar")
     st.stop()
 
-# Mostrar entidade selecionada
+# Mostrar seleção
 st.markdown(f"""
 <div class="info-box">
     <strong>✓ Entidade selecionada:</strong><br>
@@ -227,7 +288,10 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# Botões de ação
+# ============================================================================
+# BOTÕES DE AÇÃO
+# ============================================================================
+
 col1, col2 = st.columns(2)
 
 with col1:
@@ -237,71 +301,70 @@ with col2:
     btn_limpar = st.button("🔄 Limpar", use_container_width=True)
 
 if btn_limpar:
-    st.session_state.search = ""
-    st.session_state.entity_select = ""
     st.rerun()
 
-# Gerar downloads
+# ============================================================================
+# GERAR DOWNLOADS
+# ============================================================================
+
 if btn_gerar:
     st.markdown("---")
     st.subheader("📊 Arquivos Disponíveis")
     
     with st.spinner('⏳ Processando solicitação...'):
         try:
-            # Filtrar dados para 2025
-            if not entidades_2025.empty:
-                df_2025_filtrado = entidades_2025[
-                    entidades_2025['entidade'] == entidade_selecionada
-                ].copy()
-            else:
-                df_2025_filtrado = pd.DataFrame()
+            # Filtrar dados
+            df_2025_filtrado = pd.DataFrame()
+            df_2024_filtrado = pd.DataFrame()
             
-            # Filtrar dados para 2024
-            if not entidades_2024.empty:
-                df_2024_filtrado = entidades_2024[
-                    entidades_2024['entidade'] == entidade_selecionada
+            if 'estado' in df_2025.columns and 'entidade' in df_2025.columns:
+                df_2025_filtrado = df_2025[
+                    (df_2025['estado'] == sigla_selecionada) &
+                    (df_2025['entidade'] == entidade_selecionada)
                 ].copy()
-            else:
-                df_2024_filtrado = pd.DataFrame()
+            
+            if 'estado' in df_2024.columns and 'entidade' in df_2024.columns:
+                df_2024_filtrado = df_2024[
+                    (df_2024['estado'] == sigla_selecionada) &
+                    (df_2024['entidade'] == entidade_selecionada)
+                ].copy()
             
             if df_2025_filtrado.empty and df_2024_filtrado.empty:
-                st.error("❌ Nenhum dado encontrado para essa entidade")
+                st.error("❌ Nenhum dado encontrado para essa combinação")
                 st.stop()
             
             # Gerar arquivos
-            arquivos = {}
+            arquivos_gerados = {}
             
             if not df_2025_filtrado.empty:
-                excel_2025 = gerar_arquivo_excel(
-                    df_2025_filtrado,
-                    f"questionario_itp_2025_{entidade_selecionada}"
-                )
+                excel_2025 = gerar_arquivo_excel(df_2025_filtrado, "itp_2025")
                 if excel_2025:
-                    arquivos['2025'] = {
+                    nome_safe = entidade_selecionada.replace('/', '_')[:40]
+                    arquivos_gerados['2025'] = {
                         'data': excel_2025,
-                        'nome': f"questionario_itp_2025_{entidade_selecionada}.xlsx",
+                        'nome': f"questionario_itp_2025_{nome_safe}.xlsx",
                         'linhas': len(df_2025_filtrado),
                         'colunas': len(df_2025_filtrado.columns)
                     }
             
             if not df_2024_filtrado.empty:
-                excel_2024 = gerar_arquivo_excel(
-                    df_2024_filtrado,
-                    f"questionario_itp_2024_{entidade_selecionada}"
-                )
+                excel_2024 = gerar_arquivo_excel(df_2024_filtrado, "itp_2024")
                 if excel_2024:
-                    arquivos['2024'] = {
+                    nome_safe = entidade_selecionada.replace('/', '_')[:40]
+                    arquivos_gerados['2024'] = {
                         'data': excel_2024,
-                        'nome': f"questionario_itp_2024_{entidade_selecionada}.xlsx",
+                        'nome': f"questionario_itp_2024_{nome_safe}.xlsx",
                         'linhas': len(df_2024_filtrado),
                         'colunas': len(df_2024_filtrado.columns)
                     }
             
-            # Exibir arquivos
-            if arquivos:
+            # Exibir
+            if arquivos_gerados:
                 st.success(f"✅ Arquivos gerados para: **{entidade_selecionada}**")
+                st.markdown("")
                 
-                for ano, info in sorted(arquivos.items(), reverse=True):
+                for ano in sorted(arquivos_gerados.keys(), reverse=True):
+                    info = arquivos_gerados[ano]
                     col1, col2 = st.columns([3, 1])
                     
                     with col1:
@@ -310,33 +373,35 @@ if btn_gerar:
                     
                     with col2:
                         st.download_button(
-                            label="⬇️ Download",
+                            label="⬇️",
                             data=info['data'],
                             file_name=info['nome'],
                             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                             use_container_width=True
                         )
+                    st.markdown("")
                 
-                # Resumo
                 st.markdown("---")
-                st.markdown(f"""
+                st.markdown("""
                 <div class="success-box">
-                    <strong>✓ Processamento concluído!</strong><br>
-                    Clique no botão para fazer download do arquivo
+                    <strong>✓ Sucesso!</strong> Clique no botão acima para fazer download.
                 </div>
                 """, unsafe_allow_html=True)
         
         except Exception as e:
-            st.error(f"❌ Erro ao gerar arquivo: {str(e)}")
+            st.error(f"❌ Erro: {str(e)}")
             import traceback
             st.write(traceback.format_exc())
 
-# Rodapé
+# ============================================================================
+# RODAPÉ
+# ============================================================================
+
 st.markdown("---")
 col1, col2, col3 = st.columns(3)
 with col1:
-    st.caption(f"🔄 Última atualização: {datetime.now().strftime('%d/%m/%Y às %H:%M')}")
+    st.caption(f"🔄 {datetime.now().strftime('%d/%m/%Y às %H:%M')}")
 with col2:
-    st.caption("📡 Dados do Radar da Transparência")
+    st.caption("📡 Radar da Transparência")
 with col3:
-    st.caption("🚀 Powered by Streamlit")
+    st.caption("⚡ Otimizado com Parquet")
