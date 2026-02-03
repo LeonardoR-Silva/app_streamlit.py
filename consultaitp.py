@@ -125,103 +125,112 @@ if df is None:
     st.error("❌ Sem dados")
     st.stop()
 
-# Estados
-todos_estados = set()
-if 'estado' in df.columns:
-    todos_estados.update(df['estado'].dropna().unique())
+# ============================================================================
+# INTERFACE
+# ============================================================================
 
-todos_estados = sorted(list(todos_estados))
+st.title("🔍 Consulta ITP 2025 - Paraná")
+st.markdown("---")
 
-if not todos_estados:
-    st.error("❌ Nenhum estado encontrado")
+# Debug
+with st.expander("ℹ️ Informações de Debug"):
+    st.write(f"**ZIPs 2025:** {ZIP_2025_FILES if ZIP_2025_FILES else '❌ Nenhum'}")
+    st.write(f"**ZIPs 2024:** {ZIP_2024_FILES if ZIP_2024_FILES else '❌ Nenhum'}")
+    st.write(f"**Colunas do dataframe:** {list(df.columns)}")
+
+# Garantir que só tenha PR (opcional, mas seguro)
+col_estado = None
+for col in df.columns:
+    if col.strip().lower() in ["estado", "uf", "sigla_uf"]:
+        col_estado = col
+        break
+
+if col_estado:
+    df = df[df[col_estado] == "PR"].copy()
+
+# Detectar coluna de entidade
+col_entidade = None
+for col in df.columns:
+    if col.strip().lower() in ["entidade", "municipio", "nome_municipio", "nm_entidade"]:
+        col_entidade = col
+        break
+
+if not col_entidade:
+    st.error("❌ Não encontrei coluna de entidade (ex.: entidade, municipio, nome_municipio).")
+    st.write(f"Colunas disponíveis: {list(df.columns)}")
     st.stop()
 
-st.subheader("1️⃣ Estado")
-estado = st.selectbox(
-    "Selecione:",
-    [""] + todos_estados,
-    format_func=lambda x: f"{ESTADOS_MAP.get(x, x)} ({x})" if x else "-- Selecione --",
-)
-
-if not estado:
-    st.info("👆 Selecione um estado")
-    st.stop()
-
-# Entidades
-entidades = set()
-if 'estado' in df.columns and 'entidade' in df.columns:
-    entidades.update(df[df['estado'] == estado]['entidade'].dropna().unique())
-
-entidades = sorted(list(entidades))
+# Lista de entidades únicas
+entidades = sorted(df[col_entidade].dropna().unique())
 
 if not entidades:
-    st.error(f"❌ Sem entidades para {estado}")
+    st.error("❌ Nenhuma entidade encontrada para PR")
     st.stop()
 
-st.subheader("2️⃣ Entidade")
+st.subheader("1️⃣ Buscar entidade")
 
-termo = st.text_input("Buscar:", placeholder="Ex: Prefeitura...")
-entidades_filtradas = [e for e in entidades if termo.lower() in e.lower()] if termo else entidades
+termo = st.text_input(
+    "Digite parte do nome da entidade (ex: Prefeitura, Câmara, Tribunal...):",
+    placeholder="Ex: Prefeitura de Curitiba",
+)
+
+entidades_filtradas = [e for e in entidades if termo.lower() in str(e).lower()] if termo else entidades
 
 if termo and not entidades_filtradas:
-    st.warning(f"⚠️ Sem resultados para '{termo}'")
+    st.warning(f"⚠️ Nenhuma entidade encontrada contendo '{termo}'")
     st.stop()
 
-st.caption(f"{len(entidades_filtradas)} entidade(s)")
+st.caption(f"{len(entidades_filtradas)} entidade(s) encontradas")
 
 entidade = st.selectbox(
-    "Selecione:",
+    "Selecione a entidade:",
     [""] + entidades_filtradas,
     format_func=lambda x: x if x else "-- Selecione --",
 )
 
 if not entidade:
-    st.info("👆 Selecione uma entidade")
+    st.info("👆 Digite um termo e escolha uma entidade na lista acima")
     st.stop()
 
 col1, col2 = st.columns(2)
 
 with col1:
-    gerar = st.button("📥 Gerar", use_container_width=True, type="primary")
+    gerar = st.button("📥 Gerar planilha", use_container_width=True, type="primary")
 
 with col2:
-    limpar = st.button("🔄 Limpar", use_container_width=True)
+    limpar = st.button("🔄 Limpar filtros", use_container_width=True)
 
 if limpar:
     st.rerun()
 
 if gerar:
     st.markdown("---")
-    
     try:
-        df_filtrado = df[
-            (df['estado'] == estado) &
-            (df['entidade'] == entidade)
-        ].reset_index(drop=True)
-        
+        df_filtrado = df[df[col_entidade] == entidade].reset_index(drop=True)
+
         if df_filtrado.empty:
-            st.error("❌ Sem dados para essa combinação")
+            st.error("❌ Sem dados para essa entidade")
             st.stop()
-        
-        excel = gerar_excel(df_filtrado, "itp_2025")
+
+        excel = gerar_excel(df_filtrado, "itp_2025_pr")
         if excel:
             st.download_button(
-                "📥 Download ITP 2025",
+                "📥 Download ITP 2025 - PR",
                 excel,
-                f"itp_2025_pr_{entidade[:30]}.xlsx",
+                f"itp_2025_pr_{str(entidade)[:30]}.xlsx",
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True
+                use_container_width=True,
             )
-        
+
         st.markdown("---")
         st.markdown(f"""
         **✓ Entidade**: {entidade}  
         **✓ Linhas**: {len(df_filtrado)}  
         **✓ Colunas**: {len(df_filtrado.columns)}
         """)
-    
+
     except Exception as e:
-        st.error(f"❌ Erro: {e}")
+        st.error(f"❌ Erro ao gerar planilha: {e}")
 
 st.markdown("---")
-st.caption(f"🔄 {datetime.now().strftime('%d/%m às %H:%M')} | 📡 Dados do repositório")
+st.caption(f"🔄 {datetime.now().strftime('%d/%m às %H:%M')} | 📡 Dados do Paraná (PR)")
