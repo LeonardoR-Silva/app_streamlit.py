@@ -106,78 +106,43 @@ def gerar_excel(df, nome_base):
 # INTERFACE
 # ============================================================================
 
-st.title("🔍 Consulta ITP 2025")
-st.markdown("---")
-
-# Debug
-with st.expander("ℹ️ Informações de Debug"):
-    st.write(f"**ZIPs 2025:** {ZIP_2025_FILES if ZIP_2025_FILES else '❌ Nenhum'}")
-    st.write(f"**ZIPs 2024:** {ZIP_2024_FILES if ZIP_2024_FILES else '❌ Nenhum'}")
-
-df_2025, df_2024, sucesso = carregar_dados()
-
-if not sucesso:
-    st.stop()
-
-df = df_2025 if df_2025 is not None else df_2024
-
-if df is None:
-    st.error("❌ Sem dados")
-    st.stop()
-
-# ============================================================================
-# INTERFACE
-# ============================================================================
-
 st.title("🔍 Consulta ITP 2025 - Paraná")
 st.markdown("---")
 
-# Debug
 with st.expander("ℹ️ Informações de Debug"):
     st.write(f"**ZIPs 2025:** {ZIP_2025_FILES if ZIP_2025_FILES else '❌ Nenhum'}")
     st.write(f"**ZIPs 2024:** {ZIP_2024_FILES if ZIP_2024_FILES else '❌ Nenhum'}")
     st.write(f"**Colunas do dataframe:** {list(df.columns)}")
 
-# Garantir que só tenha PR (opcional, mas seguro)
-col_estado = None
-for col in df.columns:
-    if col.strip().lower() in ["estado", "uf", "sigla_uf"]:
-        col_estado = col
-        break
+# Garante apenas PR
+df = df[df["uf"] == "PR"].copy()
 
-if col_estado:
-    df = df[df[col_estado] == "PR"].copy()
-
-# Detectar coluna de entidade
-col_entidade = None
-for col in df.columns:
-    if col.strip().lower() in ["entidade", "municipio", "nome_municipio", "nm_entidade"]:
-        col_entidade = col
-        break
-
-if not col_entidade:
-    st.error("❌ Não encontrei coluna de entidade (ex.: entidade, municipio, nome_municipio).")
-    st.write(f"Colunas disponíveis: {list(df.columns)}")
+if df.empty:
+    st.error("❌ Não há dados para PR na base carregada.")
     st.stop()
 
-# Lista de entidades únicas
+# Vamos usar 'entidade_nome' como chave de busca
+col_entidade = "entidade_nome"
+
 entidades = sorted(df[col_entidade].dropna().unique())
 
 if not entidades:
-    st.error("❌ Nenhuma entidade encontrada para PR")
+    st.error("❌ Nenhuma entidade encontrada para PR.")
     st.stop()
 
 st.subheader("1️⃣ Buscar entidade")
 
 termo = st.text_input(
-    "Digite parte do nome da entidade (ex: Prefeitura, Câmara, Tribunal...):",
-    placeholder="Ex: Prefeitura de Curitiba",
+    "Digite parte do nome da entidade (ex.: Prefeitura, Câmara, etc.):",
+    placeholder="Ex: PREFEITURA MUNICIPAL DE CURITIBA",
 )
 
-entidades_filtradas = [e for e in entidades if termo.lower() in str(e).lower()] if termo else entidades
+entidades_filtradas = [
+    e for e in entidades if termo.lower() in str(e).lower()
+] if termo else entidades
 
 if termo and not entidades_filtradas:
-    st.warning(f"⚠️ Nenhuma entidade encontrada contendo '{termo}'")
+    st.warning(f"⚠️ Nenhuma entidade encontrada contendo '{termo}'.")
     st.stop()
 
 st.caption(f"{len(entidades_filtradas)} entidade(s) encontradas")
@@ -189,7 +154,7 @@ entidade = st.selectbox(
 )
 
 if not entidade:
-    st.info("👆 Digite um termo e escolha uma entidade na lista acima")
+    st.info("👆 Digite um termo e selecione uma entidade na lista.")
     st.stop()
 
 col1, col2 = st.columns(2)
@@ -209,7 +174,7 @@ if gerar:
         df_filtrado = df[df[col_entidade] == entidade].reset_index(drop=True)
 
         if df_filtrado.empty:
-            st.error("❌ Sem dados para essa entidade")
+            st.error("❌ Sem dados para essa entidade.")
             st.stop()
 
         excel = gerar_excel(df_filtrado, "itp_2025_pr")
