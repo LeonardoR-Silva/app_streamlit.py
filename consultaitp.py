@@ -8,7 +8,6 @@ import warnings
 import os
 import time
 
-warnings.filterwarnings('ignore')
 
 # ============================================================================
 # CONFIGURAÇÃO
