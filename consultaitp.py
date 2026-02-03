@@ -109,10 +109,23 @@ def gerar_excel(df, nome_base):
 st.title("🔍 Consulta ITP 2025 - Paraná")
 st.markdown("---")
 
+df_2025, df_2024, sucesso = carregar_dados()
+
+if not sucesso:
+    st.stop()
+
+df = df_2025 if df_2025 is not None else df_2024
+
+if df is None:
+    st.error("❌ Sem dados")
+    st.stop()
+
+# Debug ANTES de filtrar
 with st.expander("ℹ️ Informações de Debug"):
     st.write(f"**ZIPs 2025:** {ZIP_2025_FILES if ZIP_2025_FILES else '❌ Nenhum'}")
     st.write(f"**ZIPs 2024:** {ZIP_2024_FILES if ZIP_2024_FILES else '❌ Nenhum'}")
     st.write(f"**Colunas do dataframe:** {list(df.columns)}")
+    st.write(f"**Total de linhas antes do filtro:** {len(df)}")
 
 # Garante apenas PR
 df = df[df["uf"] == "PR"].copy()
