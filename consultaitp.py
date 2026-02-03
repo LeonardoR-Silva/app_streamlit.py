@@ -75,7 +75,7 @@ def gerar_excel(df, nome_base):
 # INTERFACE
 # ============================================================================
 
-st.title("🔍 Consulta ITP - Paraná")
+st.title("🔍Questionário ITP 2024/25- Paraná")
 st.markdown("---")
 
 with st.spinner("⏳ Carregando dados..."):
@@ -124,23 +124,38 @@ if not entidades:
 
 st.subheader("1️⃣ Selecionar Ano")
 
-# Botões para escolher ano
-col_ano1, col_ano2 = st.columns(2)
-with col_ano1:
-    if df_2025 is not None:
-        if st.button("📅 2025", use_container_width=True):
-            st.session_state.ano = 2025
-            st.rerun()
-
-with col_ano2:
-    if df_2024 is not None:
-        if st.button("📅 2024", use_container_width=True):
-            st.session_state.ano = 2024
-            st.rerun()
-
 # Definir ano ativo
 if "ano" not in st.session_state:
     st.session_state.ano = ano_ativo
+
+# Botões para escolher ano com destaque visual
+col_ano1, col_ano2 = st.columns(2)
+
+with col_ano1:
+    if df_2025 is not None:
+        if st.session_state.ano == 2025:
+            # Botão destacado (ativo)
+            if st.button("📅 2025", use_container_width=True, type="primary"):
+                st.session_state.ano = 2025
+                st.rerun()
+        else:
+            # Botão normal (inativo)
+            if st.button("📅 2025", use_container_width=True):
+                st.session_state.ano = 2025
+                st.rerun()
+
+with col_ano2:
+    if df_2024 is not None:
+        if st.session_state.ano == 2024:
+            # Botão destacado (ativo)
+            if st.button("📅 2024", use_container_width=True, type="primary"):
+                st.session_state.ano = 2024
+                st.rerun()
+        else:
+            # Botão normal (inativo)
+            if st.button("📅 2024", use_container_width=True):
+                st.session_state.ano = 2024
+                st.rerun()
 
 # Carregar dados do ano escolhido
 if st.session_state.ano == 2025:
@@ -158,7 +173,6 @@ else:
         st.error("❌ Dados de 2024 não disponíveis")
         st.stop()
 
-st.markdown(f"**Você selecionou: {ano_texto}**")
 st.markdown("---")
 
 # Lista de entidades do ano escolhido
@@ -234,4 +248,4 @@ if gerar:
         st.error(f"❌ Erro ao gerar planilha: {e}")
 
 st.markdown("---")
-st.caption(f"🔄 {datetime.now().strftime('%d/%m às %H:%M')} | 📡 ITP 2024 e 2025")
+st.caption(f"🔄 {datetime.now().strftime('%d/%m às %H:%M')} | Fonte: Programa Nacional de Transparência Pública")
