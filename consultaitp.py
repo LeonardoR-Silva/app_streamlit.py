@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import zipfile
-from io import BytesIO, StringIO
+from io import BytesIO
 from datetime import datetime
 import os
 import glob
@@ -16,7 +16,7 @@ st.set_page_config(
     layout="centered"
 )
 
-# Arquivos ZIP locais
+# Arquivos ZIP locais - o código procura automaticamente
 ZIP_2025_FILES = glob.glob('itp2025_pr*.zip') or glob.glob('*2025*.zip')
 ZIP_2024_FILES = glob.glob('itp2024_pr*.zip') or glob.glob('*2024*.zip')
 
@@ -44,14 +44,11 @@ def descompactar_zip(zip_files, ano):
             st.error(f"❌ Arquivo ZIP para {ano} não encontrado no repositório")
             return None
         
-        zip_file_path = zip_files[0]  # Primeiro ZIP encontrado
+        zip_file_path = zip_files
         st.info(f"⏳ Descompactando {ano}...")
         
-        # Abrir arquivo ZIP
         with zipfile.ZipFile(zip_file_path, 'r') as zip_ref:
-            # Listar arquivos dentro do ZIP
             files = zip_ref.namelist()
-            st.write(f"📦 Arquivos encontrados: {len(files)}")
             
             # Procurar por arquivo CSV
             csv_file = None
@@ -64,7 +61,6 @@ def descompactar_zip(zip_files, ano):
                 st.error(f"❌ Nenhum arquivo CSV encontrado em {zip_file_path}")
                 return None
             
-            # Extrair e carregar CSV
             st.write(f"📂 Lendo: {csv_file}")
             with zip_ref.open(csv_file) as f:
                 df = pd.read_csv(f, sep=";", low_memory=False)
@@ -90,11 +86,10 @@ def carregar_dados():
         st.error("❌ Não foi possível carregar nenhum arquivo de dados")
         return None, None, False
     
-    # Se um ano não existir, usar o outro
     if df_2025 is None:
-        df_2025 = df_2024.copy()
+        df_2025 = df_2024.copy() if df_2024 is not None else None
     if df_2024 is None:
-        df_2024 = df_2025.copy()
+        df_2024 = df_2025.copy() if df_2025 is not None else None
     
     return df_2025, df_2024, True
 
@@ -119,17 +114,16 @@ def gerar_excel(df, nome_base):
 st.title("🔍 Consulta ITP 2025")
 st.markdown("---")
 
-# Debug: mostrar ZIPs encontrados
+# Debug
 with st.expander("ℹ️ Informações de Debug"):
-    st.write(f"**ZIPs 2025 encontrados:** {ZIP_2025_FILES}")
-    st.write(f"**ZIPs 2024 encontrados:** {ZIP_2024_FILES}")
+    st.write(f"**ZIPs 2025 encontrados:** {ZIP_2025_FILES if ZIP_2025_FILES else '❌ Nenhum'}")
+    st.write(f"**ZIPs 2024 encontrados:** {ZIP_2024_FILES if ZIP_2024_FILES else '❌ Nenhum'}")
 
 df_2025, df_2024, sucesso = carregar_dados()
 
 if not sucesso:
     st.stop()
 
-# Usar 2025 como padrão
 df = df_2025 if df_2025 is not None else df_2024
 
 if df is None:
@@ -245,4 +239,4 @@ if gerar:
         st.error(f"❌ Erro: {e}")
 
 st.markdown("---")
-st.caption(f"🔄 {datetime.now().strftime('%d/%m às %H:%M')} | 📡 Dados compactados do repositório")
+st.caption(f"🔄 {datetime.now().strftime('%d/%m às %H:%M')} | 📡 Dados do repositório")
