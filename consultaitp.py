@@ -1,14 +1,10 @@
 import streamlit as st
 import pandas as pd
 import zipfile
-from io import BytesIO
+from io import BytesIO, StringIO
 from datetime import datetime
 import os
 import glob
-
-# ============================================================================
-# CONFIGURAÇÃO
-# ============================================================================
 
 st.set_page_config(
     page_title="Consulta ITP 2025",
@@ -16,12 +12,9 @@ st.set_page_config(
     layout="centered"
 )
 
-# Arquivos ZIP locais - o código procura automaticamente
+# Arquivos ZIP locais
 ZIP_2025_FILES = glob.glob('itp2025_pr*.zip') or glob.glob('*2025*.zip')
 ZIP_2024_FILES = glob.glob('itp2024_pr*.zip') or glob.glob('*2024*.zip')
-
-CACHE_DIR = '.cache_itp'
-os.makedirs(CACHE_DIR, exist_ok=True)
 
 ESTADOS_MAP = {
     'AC': 'Acre', 'AL': 'Alagoas', 'AP': 'Amapá', 'AM': 'Amazonas',
@@ -33,24 +26,21 @@ ESTADOS_MAP = {
     'SP': 'São Paulo', 'SE': 'Sergipe', 'TO': 'Tocantins'
 }
 
-# ============================================================================
-# FUNÇÕES DE CARREGAMENTO
-# ============================================================================
-
 def descompactar_zip(zip_files, ano):
-    """Descompacta arquivo ZIP e retorna DataFrame"""
+    """Descompacta arquivo ZIP e retorna DataFrame - CORRIGIDO"""
     try:
         if not zip_files:
-            st.error(f"❌ Arquivo ZIP para {ano} não encontrado no repositório")
+            st.error(f"❌ Arquivo ZIP para {ano} não encontrado")
             return None
         
-        zip_file_path = zip_files
+        zip_file_path = zip_files[0]
         st.info(f"⏳ Descompactando {ano}...")
         
         with zipfile.ZipFile(zip_file_path, 'r') as zip_ref:
             files = zip_ref.namelist()
+            st.write(f"📦 Encontrados {len(files)} arquivo(s)")
             
-            # Procurar por arquivo CSV
+            # Procurar por CSV
             csv_file = None
             for file in files:
                 if '.csv' in file.lower():
@@ -58,18 +48,23 @@ def descompactar_zip(zip_files, ano):
                     break
             
             if not csv_file:
-                st.error(f"❌ Nenhum arquivo CSV encontrado em {zip_file_path}")
+                st.error(f"❌ Nenhum CSV encontrado em {zip_file_path}")
+                st.write(f"Arquivos: {files}")
                 return None
             
             st.write(f"📂 Lendo: {csv_file}")
-            with zip_ref.open(csv_file) as f:
-                df = pd.read_csv(f, sep=";", low_memory=False)
             
-            st.success(f"✅ {ano} carregado com sucesso!")
+            # LER CORRETAMENTE DO ZIP
+            csv_data = zip_ref.read(csv_file).decode('utf-8')
+            df = pd.read_csv(StringIO(csv_data), sep=";", low_memory=False)
+            
+            st.success(f"✅ {ano} carregado! ({len(df)} linhas)")
             return df
     
     except Exception as e:
         st.error(f"❌ Erro ao descompactar {ano}: {str(e)}")
+        import traceback
+        st.write(traceback.format_exc())
         return None
 
 
@@ -83,7 +78,7 @@ def carregar_dados():
     df_2024 = descompactar_zip(ZIP_2024_FILES, 2024)
     
     if df_2025 is None and df_2024 is None:
-        st.error("❌ Não foi possível carregar nenhum arquivo de dados")
+        st.error("❌ Não foi possível carregar dados")
         return None, None, False
     
     if df_2025 is None:
@@ -116,8 +111,8 @@ st.markdown("---")
 
 # Debug
 with st.expander("ℹ️ Informações de Debug"):
-    st.write(f"**ZIPs 2025 encontrados:** {ZIP_2025_FILES if ZIP_2025_FILES else '❌ Nenhum'}")
-    st.write(f"**ZIPs 2024 encontrados:** {ZIP_2024_FILES if ZIP_2024_FILES else '❌ Nenhum'}")
+    st.write(f"**ZIPs 2025:** {ZIP_2025_FILES if ZIP_2025_FILES else '❌ Nenhum'}")
+    st.write(f"**ZIPs 2024:** {ZIP_2024_FILES if ZIP_2024_FILES else '❌ Nenhum'}")
 
 df_2025, df_2024, sucesso = carregar_dados()
 
@@ -127,10 +122,10 @@ if not sucesso:
 df = df_2025 if df_2025 is not None else df_2024
 
 if df is None:
-    st.error("❌ Sem dados para exibir")
+    st.error("❌ Sem dados")
     st.stop()
 
-# Preparar estados
+# Estados
 todos_estados = set()
 if 'estado' in df.columns:
     todos_estados.update(df['estado'].dropna().unique())
@@ -138,7 +133,7 @@ if 'estado' in df.columns:
 todos_estados = sorted(list(todos_estados))
 
 if not todos_estados:
-    st.error("❌ Nenhum estado encontrado nos dados")
+    st.error("❌ Nenhum estado encontrado")
     st.stop()
 
 st.subheader("1️⃣ Estado")
@@ -146,14 +141,13 @@ estado = st.selectbox(
     "Selecione:",
     [""] + todos_estados,
     format_func=lambda x: f"{ESTADOS_MAP.get(x, x)} ({x})" if x else "-- Selecione --",
-    key="state"
 )
 
 if not estado:
     st.info("👆 Selecione um estado")
     st.stop()
 
-# Filtrar entidades
+# Entidades
 entidades = set()
 if 'estado' in df.columns and 'entidade' in df.columns:
     entidades.update(df[df['estado'] == estado]['entidade'].dropna().unique())
@@ -166,12 +160,7 @@ if not entidades:
 
 st.subheader("2️⃣ Entidade")
 
-termo = st.text_input(
-    "Buscar:",
-    placeholder="Ex: Prefeitura...",
-    key="search"
-)
-
+termo = st.text_input("Buscar:", placeholder="Ex: Prefeitura...")
 entidades_filtradas = [e for e in entidades if termo.lower() in e.lower()] if termo else entidades
 
 if termo and not entidades_filtradas:
@@ -184,7 +173,6 @@ entidade = st.selectbox(
     "Selecione:",
     [""] + entidades_filtradas,
     format_func=lambda x: x if x else "-- Selecione --",
-    key="entity"
 )
 
 if not entidade:
@@ -206,13 +194,10 @@ if gerar:
     st.markdown("---")
     
     try:
-        df_filtrado = pd.DataFrame()
-        
-        if 'estado' in df.columns and 'entidade' in df.columns:
-            df_filtrado = df[
-                (df['estado'] == estado) &
-                (df['entidade'] == entidade)
-            ].reset_index(drop=True)
+        df_filtrado = df[
+            (df['estado'] == estado) &
+            (df['entidade'] == entidade)
+        ].reset_index(drop=True)
         
         if df_filtrado.empty:
             st.error("❌ Sem dados para essa combinação")
